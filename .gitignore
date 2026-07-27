@@ -1,0 +1,4 @@
+src/ai_model/venv/
+src/ai_model/checkpoint.pt
+dataset/raw/
+dataset/*.zip
