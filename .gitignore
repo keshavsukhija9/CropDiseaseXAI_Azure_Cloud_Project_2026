@@ -5,3 +5,5 @@ dataset/*.zip
 src/ai_model/explanation.jpg
 src/backend/venv/
 src/backend/explanations/
+src/frontend/node_modules/
+src/frontend/dist/
