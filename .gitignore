@@ -3,3 +3,5 @@ src/ai_model/checkpoint.pt
 dataset/raw/
 dataset/*.zip
 src/ai_model/explanation.jpg
+src/backend/venv/
+src/backend/explanations/
