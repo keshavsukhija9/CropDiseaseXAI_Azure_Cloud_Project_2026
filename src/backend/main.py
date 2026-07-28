@@ -1,5 +1,6 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 import torch
 import torch.nn as nn
 from torchvision import models, transforms
@@ -20,6 +21,14 @@ OUTPUT_DIR = "explanations"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 app = FastAPI(title="Crop Disease XAI API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 
