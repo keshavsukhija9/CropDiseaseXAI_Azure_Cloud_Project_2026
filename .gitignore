@@ -9,3 +9,4 @@ src/frontend/node_modules/
 src/frontend/dist/
 src/backend/__pycache__/
 src/backend/history.db
+src/__pycache__/
