@@ -1,35 +1,46 @@
-# CropDiseaseXAI: Explainable AI for Plant Pathology on Azure Cloud 🌾🤖
+# Explainable AI Cloud Platform for Precision Crop Disease Diagnosis using Drone Imagery
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
-[![Framework](https://img.shields.io/badge/PyTorch-v2.0+-red.svg)](https://pytorch.org/)
-[![Cloud](https://img.shields.io/badge/Azure-Cloud_Integrated-0078D4.svg)](https://azure.microsoft.com/)
+## Team Members
+- Keshav — 23BIT0262
+- Partner — 23BIT0177
 
-An end-to-end computer vision and Explainable AI (XAI) framework designed to classify crop leaf diseases and generate interpretable Grad-CAM visual heatmaps alongside biological symptom context.
+## Problem Statement
+Crop diseases account for a large share of seasonal yield loss, and manual field scouting cannot keep pace with the large, fragmented holdings typical of Indian agriculture. Existing deep learning models for disease detection are trained and validated on curated, close-up leaf datasets, and their accuracy degrades sharply on real field imagery. A second challenge is trust: most models return only a label and a confidence score, giving an agronomist no way to verify whether the decision was driven by the actual lesion or by background artefacts.
 
----
+## Objectives
+1. Build a cloud pipeline on Azure that ingests drone-captured RGB and multispectral imagery and runs automated crop disease classification on every uploaded field tile.
+2. Attach an explainability layer (Grad-CAM / SHAP) so every diagnosis is delivered with a visual justification, not just a label and confidence score.
+3. Achieve near-real-time turnaround (under 30 seconds per field tile) using serverless Azure Functions and a managed Azure Machine Learning endpoint.
+4. Store geo-tagged diagnosis history and field metadata with role-based access control for farmers, agronomists, and administrators.
+5. Push actionable, geo-located alerts (SMS / push notification) with treatment guidance to the field-plot level.
+6. Provide a trend dashboard (Power BI) to track disease spread across a season.
 
-## 📌 Features & Core Highlights
-- **Computer Vision Core:** High-accuracy disease classification using deep transfer learning.
-- **Explainable AI (XAI):** Visual feature attribution via Grad-CAM heatmaps overlaying key leaf lesions.
-- **Biological Knowledge Base:** Automatic mapping of predicted diseases to clinical symptoms, causes, and treatments.
-- **Cloud Readiness:** Architected for deployment and dataset storage on Azure Cloud infrastructure.
-- **Clean Repository Setup:** Modular layout with `.gitignore` and `.gitkeep` dataset structure.
+## Proposed Architecture/Framework
+Two architecture diagrams (full detail in `architecture/`):
 
----
+**Diagram 1 — Azure Cloud Architecture:** drone/ground station -> Blob Storage -> Data Factory -> Functions -> Azure ML -> XAI service -> Cosmos DB -> API Management -> dashboard and alerts. Microsoft Entra ID handles authentication; Azure Monitor handles observability; VNet and Key Vault secure the data layer.
 
-## 📂 Project Architecture
+**Diagram 2 — Complete System Workflow:** field scan -> image acquisition -> cloud ingestion -> AI diagnosis -> explainability -> agronomist review -> farmer alert -> field action, with verified diagnoses routed back for model retraining.
 
-```text
-CropDiseaseXAI_Azure_Cloud_Project_2026/
-├── architecture/      # System workflow diagrams & cloud infrastructure design
-├── dataset/           # Local data root (git-ignored, structure kept via .gitkeep)
-├── docs/              # Research papers, literature survey, and Phase-I reports
-├── literature_survey/ # Comparative analysis of existing crop models
-├── presentation/      # Project presentation decks (.pptx / .pdf)
-├── references/        # Citation references & papers
-├── results/           # Saved Grad-CAM heatmaps, evaluation metrics, and plots
-├── src/               # Core codebase
-│   └── explain.py     # Grad-CAM XAI explanation module & disease knowledge base
-├── .gitignore         # Excludes heavy datasets and model checkpoints
-├── requirements.txt   # Core Python dependencies
-└── README.md          # Project documentation# Explainable AI Cloud Platform for Precision Crop Disease Diagnosis using Drone Imagery
+## Technology Stack
+- **Cloud Platform:** Microsoft Azure (Blob Storage, Data Factory, Functions, Machine Learning, Cosmos DB, API Management, App Service, Notification Hubs, Entra ID, Monitor, VNet, Key Vault, Power BI)
+- **AI/ML:** PyTorch, torchvision, MobileNetV2 (transfer learning), Grad-CAM (pytorch-grad-cam)
+- **Backend:** FastAPI, Python 3.12
+- **Frontend:** React (Vite)
+- **Database:** SQLite (local prototype), migrating to Azure Cosmos DB / Azure SQL
+
+## Dataset Details
+- **Dataset Name:** PlantVillage Dataset (color subset)
+- **Source:** Kaggle (abdallahalidev/plantvillage-dataset)
+- **URL:** https://www.kaggle.com/datasets/abdallahalidev/plantvillage-dataset
+- **Size:** 2.04 GB
+- **Records:** 54,305 leaf images
+- **Classes:** 38 (across 14 crop species, disease + healthy)
+- **License:** CC-BY-NC-SA-4.0
+- **Note:** Originally scoped UAV-paired dataset (MH-SoyaHealthVision, 9.75GB) was substituted with PlantVillage to fit the Phase-I timeline.
+
+## Repository Structure
+See folder-level README files for the purpose of each directory:
+docs/, literature_survey/, architecture/, dataset/, src/frontend/, src/backend/, src/ai_model/, src/azure/, results/, presentation/, references/
+
+See WORK_DISTRIBUTION.md for individual contribution breakdown.
