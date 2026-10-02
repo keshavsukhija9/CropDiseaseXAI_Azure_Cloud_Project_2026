@@ -1,30 +1,36 @@
-from fastapi import FastAPI, UploadFile, File
-from fastapi.responses import FileResponse
-from fastapi.middleware.cors import CORSMiddleware
-import torch
-import torch.nn as nn
-from torchvision import models, transforms
-from pytorch_grad_cam import GradCAM
-from pytorch_grad_cam.utils.image import show_cam_on_image
-from PIL import Image
-import numpy as np
-import json
 import io
-import uuid
 import os
+import json
+import uuid
 import sqlite3
 from datetime import datetime, timezone
 
-IMG_SIZE = 224
-AI_MODEL_DIR = "../ai_model"
-CHECKPOINT_PATH = f"{AI_MODEL_DIR}/checkpoint.pt"
-CLASS_MAP_PATH = f"{AI_MODEL_DIR}/class_to_idx.json"
+import numpy as np
+import torch
+import yaml
+from PIL import Image
+from fastapi import FastAPI, UploadFile, File
+from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pytorch_grad_cam.utils.image import show_cam_on_image
+
+from src.ai_model.config import LEAF_CLASSES, IMAGE_SIZE
+from src.ai_model.data.datasets import default_transform
+from src.ai_model.models.full_model import CrossScaleDiseaseModel
+from src.ai_model.models.severity import SeverityHead
+from src.ai_model.models.uncertainty import mc_dropout_predict, decide
+from src.ai_model.xai.gradcam import run_gradcam
+
+CONFIG_PATH = os.getenv("APP_CONFIG", "configs/default.yaml")
+CHECKPOINT_PATH = os.getenv("MODEL_CHECKPOINT", "runs/best.pt")
 OUTPUT_DIR = "explanations"
 DB_PATH = "history.db"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-app = FastAPI(title="Crop Disease XAI API")
+with open(CONFIG_PATH) as f:
+    CFG = yaml.safe_load(f)
 
+app = FastAPI(title="Cross-Scale Crop Disease XAI API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
@@ -35,51 +41,34 @@ app.add_middleware(
 
 device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 
-with open(CLASS_MAP_PATH) as f:
-    class_to_idx = json.load(f)
-idx_to_class = {v: k for k, v in class_to_idx.items()}
-num_classes = len(class_to_idx)
-
-model = models.mobilenet_v2(weights=None)
-model.classifier[1] = nn.Linear(model.last_channel, num_classes)
+model = CrossScaleDiseaseModel(
+    num_classes=CFG["model"]["num_classes"],
+    leaf_backbone=CFG["model"]["leaf_backbone"],
+    uav_backbone=CFG["model"]["uav_backbone"],
+    fusion_dim=CFG["model"]["fusion_dim"],
+    pretrained=False,
+).to(device)
 model.load_state_dict(torch.load(CHECKPOINT_PATH, map_location=device))
-model = model.to(device)
 model.eval()
 
-transform = transforms.Compose([
-    transforms.Resize((IMG_SIZE, IMG_SIZE)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
+transform = default_transform(train=False)
+
 
 def get_treatment_advice(class_name):
     name = class_name.lower()
     if "healthy" in name:
         return "No treatment needed. Continue routine monitoring."
-    if "blight" in name:
-        return "Remove and destroy infected leaves. Apply a copper-based or chlorothalonil fungicide. Improve air circulation and avoid overhead watering."
     if "rust" in name:
-        return "Prune affected areas. Apply a rust-specific fungicide (e.g. myclobutanil). Remove nearby alternate host plants if applicable (e.g. cedar for apple rust)."
-    if "mildew" in name:
-        return "Apply sulfur or potassium bicarbonate-based fungicide. Increase airflow between plants and avoid wetting foliage."
-    if "spot" in name:
-        return "Remove affected leaves. Apply a broad-spectrum fungicide. Avoid working in the field when foliage is wet."
-    if "rot" in name or "scab" in name:
-        return "Remove and dispose of infected plant material away from the field. Apply an appropriate fungicide during the growing season."
-    if "mosaic" in name or "virus" in name or "curl" in name:
-        return "No chemical cure. Remove and destroy infected plants to prevent spread. Control insect vectors (aphids/whiteflies) with insecticidal soap."
-    if "mite" in name:
-        return "Apply miticide or insecticidal soap. Increase humidity around plants, as spider mites thrive in dry conditions."
-    if "greening" in name or "huanglongbing" in name:
-        return "No cure available. Remove and destroy infected trees to prevent spread. Control psyllid insect vectors."
-    if "bacterial" in name:
-        return "Apply copper-based bactericide. Avoid overhead irrigation and remove infected plant debris."
+        return "Apply a rust-specific fungicide (e.g. myclobutanil or propiconazole). Remove severely infected leaves and improve field airflow."
+    if "septoria" in name:
+        return "Remove and destroy affected lower leaves. Apply a strobilurin or triazole fungicide. Rotate crops to reduce inoculum carryover."
+    if "frogeye" in name:
+        return "Apply a QoI or triazole fungicide at early infection. Use resistant soybean varieties in future plantings."
+    if "mosaic" in name:
+        return "No chemical cure. Remove and destroy infected plants. Control aphid vectors with insecticidal soap or approved insecticide."
+    if "caterpillar" in name or "semi_looper" in name or "looper" in name:
+        return "Apply Bt (Bacillus thuringiensis) spray or an approved insecticide. Scout field edges regularly during pest season."
     return "Consult a local agronomist for a targeted treatment plan."
-
-
-def compute_severity(grayscale_cam, threshold=0.5):
-    activated_fraction = float((grayscale_cam >= threshold).mean())
-    return round(activated_fraction * 100, 1)
 
 
 def init_db():
@@ -88,15 +77,20 @@ def init_db():
         CREATE TABLE IF NOT EXISTS predictions (
             id TEXT PRIMARY KEY,
             timestamp TEXT NOT NULL,
-            filename TEXT,
+            leaf_filename TEXT,
+            uav_filename TEXT,
             predicted_class TEXT NOT NULL,
             confidence REAL NOT NULL,
             severity_pct REAL NOT NULL,
+            severity_bucket TEXT NOT NULL,
+            uncertainty REAL NOT NULL,
+            decision TEXT NOT NULL,
             explanation_id TEXT NOT NULL
         )
     """)
     conn.commit()
     conn.close()
+
 
 init_db()
 
@@ -107,38 +101,57 @@ def health():
 
 
 @app.post("/predict")
-async def predict(file: UploadFile = File(...)):
-    image_bytes = await file.read()
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    rgb_img = np.array(img.resize((IMG_SIZE, IMG_SIZE))) / 255.0
-    input_tensor = transform(img).unsqueeze(0).to(device)
+async def predict(leaf_image: UploadFile = File(...), uav_image: UploadFile = File(...)):
+    leaf_bytes = await leaf_image.read()
+    uav_bytes = await uav_image.read()
 
+    leaf_img = Image.open(io.BytesIO(leaf_bytes)).convert("RGB")
+    uav_img = Image.open(io.BytesIO(uav_bytes)).convert("RGB")
+
+    leaf_tensor = transform(leaf_img).unsqueeze(0).to(device)
+    uav_tensor = transform(uav_img).unsqueeze(0).to(device)
+
+    # deterministic prediction (dropout off) for the headline class + severity
     with torch.no_grad():
-        outputs = model(input_tensor)
-        probs = torch.softmax(outputs, dim=1)
-        pred_idx = probs.argmax(dim=1).item()
+        logits, severity_frac, _ = model(leaf_tensor, uav_tensor)
+        probs = torch.softmax(logits, dim=-1)
+        pred_idx = probs.argmax(dim=-1).item()
         confidence = probs[0, pred_idx].item()
 
-    predicted_class = idx_to_class[pred_idx]
+    predicted_class = LEAF_CLASSES[pred_idx]
+    severity_pct = round(float(severity_frac.item()) * 100, 1)
+    severity_bucket = SeverityHead.bucket(
+        severity_pct, CFG["severity"]["low_max_pct"], CFG["severity"]["moderate_max_pct"]
+    )
 
-    target_layer = model.features[-1]
-    cam = GradCAM(model=model, target_layers=[target_layer])
-    grayscale_cam = cam(input_tensor=input_tensor)[0]
-    visualization = show_cam_on_image(rgb_img.astype(np.float32), grayscale_cam, use_rgb=True)
+    # Module 4: MC-Dropout uncertainty -> decision gate
+    _, norm_entropy = mc_dropout_predict(model, leaf_tensor, uav_tensor, passes=CFG["model"]["mc_dropout_passes"])
+    model.eval()  # mc_dropout_predict flips dropout to train mode; reset
+    uncertainty = round(float(norm_entropy.item()), 3)
+    decision = decide(
+        uncertainty, CFG["uncertainty"]["entropy_low_threshold"], CFG["uncertainty"]["entropy_high_threshold"]
+    )
 
-    severity_pct = compute_severity(grayscale_cam)
+    # Module 3: Grad-CAM visualization saved for the frontend
+    rgb_leaf = np.array(leaf_img.resize((IMAGE_SIZE, IMAGE_SIZE))) / 255.0
+    grayscale_cam = run_gradcam(model, leaf_tensor, uav_tensor, class_idx=pred_idx, plus_plus=False)[0]
+    visualization = show_cam_on_image(rgb_leaf.astype(np.float32), grayscale_cam, use_rgb=True)
+
     treatment = get_treatment_advice(predicted_class)
 
     explanation_id = str(uuid.uuid4())
-    output_path = f"{OUTPUT_DIR}/{explanation_id}.jpg"
-    Image.fromarray(visualization).save(output_path)
+    Image.fromarray(visualization).save(f"{OUTPUT_DIR}/{explanation_id}.jpg")
 
     prediction_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).isoformat()
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
-        "INSERT INTO predictions (id, timestamp, filename, predicted_class, confidence, severity_pct, explanation_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (prediction_id, timestamp, file.filename, predicted_class, confidence, severity_pct, explanation_id),
+        """INSERT INTO predictions
+           (id, timestamp, leaf_filename, uav_filename, predicted_class, confidence,
+            severity_pct, severity_bucket, uncertainty, decision, explanation_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (prediction_id, timestamp, leaf_image.filename, uav_image.filename, predicted_class,
+         confidence, severity_pct, severity_bucket, uncertainty, decision, explanation_id),
     )
     conn.commit()
     conn.close()
@@ -149,6 +162,9 @@ async def predict(file: UploadFile = File(...)):
         "predicted_class": predicted_class,
         "confidence": round(confidence, 4),
         "severity_pct": severity_pct,
+        "severity_bucket": severity_bucket,
+        "uncertainty": uncertainty,
+        "decision": decision,
         "treatment": treatment,
         "explanation_id": explanation_id,
         "explanation_url": f"/explanation/{explanation_id}",
@@ -157,8 +173,7 @@ async def predict(file: UploadFile = File(...)):
 
 @app.get("/explanation/{explanation_id}")
 def get_explanation(explanation_id: str):
-    path = f"{OUTPUT_DIR}/{explanation_id}.jpg"
-    return FileResponse(path, media_type="image/jpeg")
+    return FileResponse(f"{OUTPUT_DIR}/{explanation_id}.jpg", media_type="image/jpeg")
 
 
 @app.get("/history")
@@ -166,8 +181,44 @@ def get_history(limit: int = 20):
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        "SELECT id, timestamp, filename, predicted_class, confidence, severity_pct, explanation_id FROM predictions ORDER BY timestamp DESC LIMIT ?",
+        """SELECT id, timestamp, leaf_filename, uav_filename, predicted_class, confidence,
+                  severity_pct, severity_bucket, uncertainty, decision, explanation_id
+           FROM predictions ORDER BY timestamp DESC LIMIT ?""",
         (limit,),
     ).fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+
+@app.get("/drift-status")
+def drift_status():
+    """
+    Module 6: drift check against logged predictions. Compares the most
+    recent 50 predictions' confidence distribution against the prior 50
+    (reference window) using PSI + KS-test.
+    """
+    from src.ai_model.drift.drift_monitor import check_drift
+
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute(
+        "SELECT confidence, predicted_class FROM predictions ORDER BY timestamp DESC LIMIT 100"
+    ).fetchall()
+    conn.close()
+
+    if len(rows) < 20:
+        return {"status": "insufficient_data", "message": "Need at least 20 logged predictions to assess drift."}
+
+    confidences = np.array([r[0] for r in rows])
+    classes = np.array([LEAF_CLASSES.index(r[1]) for r in rows])
+    mid = len(rows) // 2
+    current_conf, reference_conf = confidences[:mid], confidences[mid:]
+    current_cls, reference_cls = classes[:mid], classes[mid:]
+
+    report = check_drift(reference_conf, current_conf, reference_cls, current_cls, reference_conf, current_conf)
+    return {
+        "drift_detected": report.drift_detected,
+        "reasons": report.reasons,
+        "input_psi": round(report.input_psi, 4),
+        "class_dist_ks_pvalue": round(report.class_dist_ks_pvalue, 4),
+        "confidence_psi": round(report.confidence_psi, 4),
+    }
