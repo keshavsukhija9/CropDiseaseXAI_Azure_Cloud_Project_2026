@@ -1,0 +1,22 @@
+data:
+  leaf_dir: dataset/samples/leaf
+  uav_dir: dataset/samples/uav
+  batch_size: 4
+model:
+  leaf_backbone: mobilenetv2_100
+  uav_backbone: vit_small_patch16_224
+  num_classes: 6
+  fusion_dim: 256
+  mc_dropout_passes: 10
+  pretrained: false
+train:
+  epochs: 2
+  lr: 3.0e-4
+  weight_decay: 1.0e-4
+  seed: 42
+uncertainty:
+  entropy_low_threshold: 0.35
+  entropy_high_threshold: 0.65
+severity:
+  low_max_pct: 10
+  moderate_max_pct: 35

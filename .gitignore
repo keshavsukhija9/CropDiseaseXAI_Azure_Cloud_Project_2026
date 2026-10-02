@@ -27,3 +27,7 @@ venv/
 runs/
 __pycache__/
 *.pyc
+
+# exception: keep tiny sample dataset for smoke-testing (55MB, not the full 9.8GB set)
+!dataset/samples/
+!dataset/samples/**
