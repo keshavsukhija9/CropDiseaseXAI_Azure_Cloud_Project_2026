@@ -22,3 +22,8 @@ dataset/raw/
 !src/frontend/src/assets/*
 venv/
 venv/
+
+# trained checkpoints and bytecode cache
+runs/
+__pycache__/
+*.pyc
