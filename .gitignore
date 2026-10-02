@@ -10,3 +10,15 @@ src/frontend/dist/
 src/backend/__pycache__/
 src/backend/history.db
 src/__pycache__/
+
+# dataset images (too large for git — document source + counts instead)
+dataset/mh_soyahealthvision_leaf/
+dataset/mh_soyahealthvision_uav/
+dataset/raw/
+*.jpg
+*.jpeg
+*.png
+!src/frontend/public/*.svg
+!src/frontend/src/assets/*
+venv/
+venv/
