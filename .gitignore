@@ -1,35 +1,25 @@
-src/ai_model/venv/
-src/ai_model/checkpoint.pt
-dataset/raw/
-dataset/*.zip
-src/ai_model/explanation.jpg
-src/backend/venv/
-src/backend/explanations/
+# environments
+venv/
 src/frontend/node_modules/
 src/frontend/dist/
-src/backend/__pycache__/
-src/backend/history.db
-src/__pycache__/
 
-# dataset images (too large for git — document source + counts instead)
+# runtime artifacts
+__pycache__/
+*.pyc
+runs/
+explanations/
+*.db
+
+# dataset images (too large for git — see dataset/README.md for source + counts)
+dataset/raw/
+dataset/*.zip
 dataset/mh_soyahealthvision_leaf/
 dataset/mh_soyahealthvision_uav/
-dataset/raw/
 *.jpg
 *.jpeg
 *.png
 !src/frontend/public/*.svg
 !src/frontend/src/assets/*
-venv/
-venv/
-
-# trained checkpoints and bytecode cache
-runs/
-__pycache__/
-*.pyc
-
-# exception: keep tiny sample dataset for smoke-testing (55MB, not the full 9.8GB set)
 !dataset/samples/
 !dataset/samples/**
-explanations/
-*.db
+.DS_Store
