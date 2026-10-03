@@ -1,49 +1,51 @@
 # Architecture
 
 ## System overview
-                ┌─────────────────────┐
-                │  Leaf image (micro) │   ┌──────────────────────┐
-                │  UAV image (macro)  │   │  React frontend      │
-                └──────────┬───────────┘   │  (upload + results)  │
-                           │                └──────────┬───────────┘
-                           ▼                           │
-                FastAPI backend (/predict)  ◄──────────┘
-                           │
-          ┌────────────────┼────────────────┐
-          ▼                                  ▼
- Leaf CNN (MobileNetV2)          UAV ViT (vit_small_patch16_224)
-          │                                  │
-          └──────────► Cross-Scale Attention Fusion ◄──────────┘
-                           │
-      ┌────────────────────┼─────────────────────┐
-      ▼                    ▼                      ▼
-Disease classifier Severity head (image- MC-Dropout uncertainty
-(6 classes) derived % affected, (entropy over 20 passes)
-Low/Mod/High bucket)
-│ │ │
-└────────────────────┴──────────┬───────────┘
-▼
-Decision gate: low uncertainty -> auto-accept
-high uncertainty -> agronomist review
-│
-▼
-SQLite (prediction log + history)
-│
-▼
-/drift-status: PSI + KS-test on rolling
-prediction window (Module 6)
 
+```
+                    Leaf image (micro)         React frontend
+                    UAV image (macro)          (upload + results)
+                           |                           |
+                           v                           |
+                    FastAPI backend (/predict)  <-------
+                           |
+              +------------+------------+
+              v                         v
+     Leaf CNN (MobileNetV2)   UAV ViT (vit_small_patch16_224)
+              |                         |
+              +---> Cross-Scale Attention Fusion <---+
+                           |
+          +----------------+-----------------+
+          v                v                 v
+   Disease classifier  Severity head    MC-Dropout uncertainty
+   (6 classes)         (image-derived   (entropy over 20 passes)
+                        % affected,
+                        Low/Mod/High)
+          |                |                 |
+          +----------------+--------+--------+
+                                    v
+                     Decision gate: low uncertainty -> auto-accept
+                                    high uncertainty -> agronomist review
+                                    |
+                                    v
+                            SQLite (prediction log + history)
+                                    |
+                                    v
+                        /drift-status: PSI + KS-test on rolling
+                        prediction window (Module 6)
+```
 
 ## XAI evaluation flow (Module 3)
 
-Leaf image ──► [Grad-CAM | Grad-CAM++ | Integrated Gradients] ──► saliency map
-│
-(disease-region ground truth —
-not yet available; placeholder
-mask used for pipeline testing)
-▼
-IoU + pointing-game accuracy per method
-
+```
+Leaf image -> [Grad-CAM | Grad-CAM++ | Integrated Gradients] -> saliency map
+                                                                      |
+                                                   (disease-region ground truth
+                                                    not yet available; placeholder
+                                                    mask used for pipeline testing)
+                                                                      v
+                                              IoU + pointing-game accuracy per method
+```
 
 Verified output on a real trained sample (class: Healthy):
 - Grad-CAM: IoU 0.188, pointing-game miss
@@ -51,7 +53,7 @@ Verified output on a real trained sample (class: Healthy):
 - Integrated Gradients: IoU 0.215, pointing-game hit
 
 (Numbers are against a placeholder 80x80 center mask, not real disease-region
-ground truth — included to demonstrate the evaluation pipeline runs correctly,
+ground truth -- included to demonstrate the evaluation pipeline runs correctly,
 not as a claim about localization quality. Real ground-truth masks are future work.)
 
 ## Robustness results (Module 5, n=60 validation images)
@@ -68,7 +70,7 @@ not as a claim about localization quality. Real ground-truth masks are future wo
 | JPEG compression | 0.483 |
 | Blur | 0.333 |
 
-Blur and JPEG compression cause the largest accuracy drops — motivates
+Blur and JPEG compression cause the largest accuracy drops -- motivates
 blur/compression-aware augmentation as future work, exactly the experimental
 contribution the guidance document asks for.
 
