@@ -1,9 +1,9 @@
-fastapi
-uvicorn[standard]
-python-multipart
 torch
 torchvision
 timm
+fastapi
+uvicorn[standard]
+python-multipart
 grad-cam
 captum
 shap
@@ -12,3 +12,4 @@ numpy
 scipy
 pyyaml
 scikit-learn
+opencv-python-headless

@@ -1,11 +1,25 @@
-src/ai_model/venv/
-src/ai_model/checkpoint.pt
-dataset/raw/
-dataset/*.zip
-src/ai_model/explanation.jpg
-src/backend/venv/
-src/backend/explanations/
+# environments
+venv/
 src/frontend/node_modules/
 src/frontend/dist/
-src/backend/__pycache__/
-src/backend/history.db
+
+# runtime artifacts
+__pycache__/
+*.pyc
+runs/
+explanations/
+*.db
+
+# dataset images (too large for git — see dataset/README.md for source + counts)
+dataset/raw/
+dataset/*.zip
+dataset/mh_soyahealthvision_leaf/
+dataset/mh_soyahealthvision_uav/
+*.jpg
+*.jpeg
+*.png
+!src/frontend/public/*.svg
+!src/frontend/src/assets/*
+!dataset/samples/
+!dataset/samples/**
+.DS_Store

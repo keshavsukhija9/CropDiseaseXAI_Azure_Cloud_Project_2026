@@ -1,84 +1,89 @@
+import argparse
+import yaml
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader, random_split
-from torchvision import datasets, transforms, models
-import time
-import json
-import os
+from torch import nn, optim
 
-DATA_DIR = "../../dataset/raw/plantvillage_dataset/color"
-BATCH_SIZE = 32
-EPOCHS = 5
-LR = 1e-4
-IMG_SIZE = 224
-CHECKPOINT_PATH = "checkpoint.pt"
-CLASS_MAP_PATH = "class_to_idx.json"
+from src.ai_model.data.datasets import PairedFusionDataset
+from src.ai_model.models.full_model import CrossScaleDiseaseModel
 
-device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-print(f"Using device: {device}")
 
-# ---------- Data ----------
-transform = transforms.Compose([
-    transforms.Resize((IMG_SIZE, IMG_SIZE)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
+def load_config(path):
+    with open(path) as f:
+        return yaml.safe_load(f)
 
-full_dataset = datasets.ImageFolder(DATA_DIR, transform=transform)
-num_classes = len(full_dataset.classes)
-print(f"Found {len(full_dataset)} images across {num_classes} classes")
 
-with open(CLASS_MAP_PATH, "w") as f:
-    json.dump(full_dataset.class_to_idx, f, indent=2)
+def get_device():
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cuda" if torch.cuda.is_available() else "cpu"
 
-val_size = int(0.15 * len(full_dataset))
-train_size = len(full_dataset) - val_size
-train_ds, val_ds = random_split(full_dataset, [train_size, val_size])
 
-train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
-val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+def main(cfg_path):
+    cfg = load_config(cfg_path)
+    torch.manual_seed(cfg["train"]["seed"])
+    device = get_device()
+    print("device:", device)
 
-# ---------- Model: transfer learning on MobileNetV2 ----------
-model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.IMAGENET1K_V2)
-model.classifier[1] = nn.Linear(model.last_channel, num_classes)
-model = model.to(device)
+    full_ds = PairedFusionDataset(cfg["data"]["leaf_dir"], cfg["data"]["uav_dir"], train=True)
+    val_size = int(0.15 * len(full_ds))
+    train_size = len(full_ds) - val_size
+    train_ds, val_ds = random_split(full_ds, [train_size, val_size], generator=torch.Generator().manual_seed(42))
+    print(f"train: {len(train_ds)}  val: {len(val_ds)}")
 
-criterion = nn.CrossEntropyLoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+    train_loader = DataLoader(train_ds, batch_size=cfg["data"]["batch_size"], shuffle=True, num_workers=0)
+    val_loader = DataLoader(val_ds, batch_size=cfg["data"]["batch_size"], num_workers=0)
 
-# ---------- Train ----------
-def run_epoch(loader, train_mode=True):
-    model.train(train_mode)
-    total_loss, correct, total = 0.0, 0, 0
-    for batch_idx, (images, labels) in enumerate(loader):
-        images, labels = images.to(device), labels.to(device)
-        if train_mode:
-            optimizer.zero_grad()
-        outputs = model(images)
-        loss = criterion(outputs, labels)
-        if train_mode:
+    model = CrossScaleDiseaseModel(
+        num_classes=cfg["model"]["num_classes"],
+        leaf_backbone=cfg["model"]["leaf_backbone"],
+        uav_backbone=cfg["model"]["uav_backbone"],
+        fusion_dim=cfg["model"]["fusion_dim"],
+        pretrained=cfg["model"]["pretrained"],
+    ).to(device)
+
+    opt = optim.AdamW(model.parameters(), lr=cfg["train"]["lr"], weight_decay=cfg["train"]["weight_decay"])
+    loss_fn = nn.CrossEntropyLoss()
+
+    best_val_acc = 0.0
+    for epoch in range(cfg["train"]["epochs"]):
+        model.train()
+        running_loss = 0.0
+        for batch in train_loader:
+            leaf = batch["leaf"].to(device)
+            uav = batch["uav"].to(device)
+            label = batch["label"].to(device)
+            logits, severity_frac, _ = model(leaf, uav)
+            loss = loss_fn(logits, label)
+            opt.zero_grad()
             loss.backward()
-            optimizer.step()
-        total_loss += loss.item() * images.size(0)
-        correct += (outputs.argmax(1) == labels).sum().item()
-        total += images.size(0)
-        if train_mode and batch_idx % 20 == 0:
-            print(f"  batch {batch_idx}/{len(loader)} | running_acc={correct/total:.4f}")
-    return total_loss / total, correct / total
+            opt.step()
+            running_loss += loss.item()
+
+        model.eval()
+        correct, total = 0, 0
+        with torch.no_grad():
+            for batch in val_loader:
+                leaf = batch["leaf"].to(device)
+                uav = batch["uav"].to(device)
+                label = batch["label"].to(device)
+                logits, _, _ = model(leaf, uav)
+                pred = logits.argmax(dim=-1)
+                correct += (pred == label).sum().item()
+                total += label.size(0)
+        val_acc = correct / max(total, 1)
+        print(f"epoch {epoch+1}/{cfg['train']['epochs']}  loss={running_loss/len(train_loader):.4f}  val_acc={val_acc:.4f}")
+
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            torch.save(model.state_dict(), "runs/best.pt")
+            print(f"  -> saved new best (val_acc={val_acc:.4f})")
+
+    print("training done. best val_acc:", best_val_acc)
+
 
 if __name__ == "__main__":
-    best_acc = 0.0
-    for epoch in range(1, EPOCHS + 1):
-        start = time.time()
-        train_loss, train_acc = run_epoch(train_loader, train_mode=True)
-        val_loss, val_acc = run_epoch(val_loader, train_mode=False)
-        elapsed = time.time() - start
-        print(f"Epoch {epoch}/{EPOCHS} | train_loss={train_loss:.4f} train_acc={train_acc:.4f} "
-              f"| val_loss={val_loss:.4f} val_acc={val_acc:.4f} | {elapsed:.1f}s")
-
-        if val_acc > best_acc:
-            best_acc = val_acc
-            torch.save(model.state_dict(), CHECKPOINT_PATH)
-            print(f"  -> saved new best checkpoint (val_acc={val_acc:.4f})")
-
-    print(f"Training complete. Best val_acc={best_acc:.4f}. Checkpoint: {CHECKPOINT_PATH}")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default="configs/default.yaml")
+    args = parser.parse_args()
+    main(args.config)
