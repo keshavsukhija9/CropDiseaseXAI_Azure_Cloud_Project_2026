@@ -52,6 +52,7 @@ transform = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
+
 def get_treatment_advice(class_name):
     name = class_name.lower()
     if "healthy" in name:
