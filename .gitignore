@@ -23,3 +23,5 @@ dataset/mh_soyahealthvision_uav/
 !dataset/samples/
 !dataset/samples/**
 .DS_Store
+deploy.zip
+log.zip

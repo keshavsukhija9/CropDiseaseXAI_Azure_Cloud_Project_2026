@@ -1,0 +1,12 @@
+.git
+venv
+dataset
+literature_survey
+presentation
+references
+architecture
+src/frontend
+**/__pycache__
+*.zip
+.env*
+history.db
