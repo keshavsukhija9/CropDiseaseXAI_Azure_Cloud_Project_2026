@@ -54,6 +54,7 @@ model.eval()
 transform = default_transform(train=False)
 
 
+
 def get_treatment_advice(class_name):
     name = class_name.lower()
     if "healthy" in name:
